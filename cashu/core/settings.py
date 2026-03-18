@@ -194,6 +194,15 @@ class FakeWalletSettings(MintSettings):
     fakewallet_balance_sat: int = Field(default=1337)
     fakewallet_balance_usd: int = Field(default=1337)
     fakewallet_balance_eur: int = Field(default=1337)
+    fakewallet_accept_arbitrary_melt_requests: bool = Field(
+        default=False,
+        description="Accept arbitrary (non-bolt11) melt requests. "
+        "Useful for testing manual approval workflows with IBAN, etc.",
+    )
+    fakewallet_arbitrary_melt_fee_sat: int = Field(
+        default=1,
+        description="Fee in satoshis for arbitrary melt requests.",
+    )
 
 
 class MintInformation(CashuSettings):
