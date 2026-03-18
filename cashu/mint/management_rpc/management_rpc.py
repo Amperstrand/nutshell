@@ -1,5 +1,6 @@
 
 import os
+from typing import Optional
 
 import grpc
 from loguru import logger
@@ -7,11 +8,13 @@ from loguru import logger
 import cashu.mint.management_rpc.protos.management_pb2 as management_pb2
 import cashu.mint.management_rpc.protos.management_pb2_grpc as management_pb2_grpc
 from cashu.core.base import (
+    Method,
     MeltQuoteState,
     MintQuoteState,
     Unit,
 )
 from cashu.core.settings import settings
+from cashu.lightning.fake import FakeWallet
 
 from ..ledger import Ledger
 
@@ -22,7 +25,17 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
         self.ledger = ledger
         super().__init__()
 
-    def GetInfo(self, request, _):
+    def _get_fake_wallet(self, unit: Unit = Unit.sat) -> Optional[FakeWallet]:
+        """Get the FakeWallet backend if available."""
+        try:
+            backend = self.ledger.backends.get(Method.bolt11, {}).get(unit)
+            if isinstance(backend, FakeWallet):
+                return backend
+        except Exception as exc:
+            logger.warning(f"Could not get FakeWallet: {exc}")
+        return None
+
+    def GetInfo(self, request, context):
         logger.debug("gRPC GetInfo has been called")
         mint_info_dict = self.ledger.mint_info.dict()
         del mint_info_dict["nuts"]
@@ -31,7 +44,7 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
         response = management_pb2.GetInfoResponse(**mint_info_dict)
         return response
     
-    async def UpdateMotd(self, request, _):
+    async def UpdateMotd(self, request, context):
         logger.debug("gRPC UpdateMotd has been called")
         settings.mint_info_motd = request.motd
         return management_pb2.UpdateResponse()
@@ -112,7 +125,7 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
             raise Exception("No quote ttl was specified")
         return management_pb2.UpdateResponse()
 
-    async def GetNut04Quote(self, request, _):
+    async def GetNut04Quote(self, request, context):
         logger.debug("gRPC GetNut04Quote has been called")
         mint_quote = await self.ledger.get_mint_quote(request.quote_id)
         mint_quote_dict = mint_quote.dict()
@@ -123,13 +136,13 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
             quote=management_pb2.Nut04Quote(**mint_quote_dict)
         )
 
-    async def UpdateNut04Quote(self, request, _):
+    async def UpdateNut04Quote(self, request, context):
         logger.debug("gRPC UpdateNut04Quote has been called")
         state = MintQuoteState(request.state)
         await self.ledger.db_write._update_mint_quote_state(request.quote_id, state)
         return management_pb2.UpdateResponse()
 
-    async def GetNut05Quote(self, request, _):
+    async def GetNut05Quote(self, request, context):
         logger.debug("gRPC GetNut05Quote has been called")
         melt_quote = await self.ledger.get_melt_quote(request.quote_id)
         melt_quote_dict = melt_quote.dict()
@@ -139,7 +152,7 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
             quote=management_pb2.Nut05Quote(**melt_quote_dict)
         )
 
-    async def UpdateNut05Quote(self, request, _):
+    async def UpdateNut05Quote(self, request, context):
         logger.debug("gRPC UpdateNut05Quote has been called")
         state = MeltQuoteState(request.state)
         await self.ledger.db_write._update_melt_quote_state(request.quote_id, state)
@@ -160,7 +173,7 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
             input_fee_ppk=new_keyset.input_fee_ppk
         )
 
-    async def UpdateLightningFee(self, request, _):
+    async def UpdateLightningFee(self, request, context):
         logger.debug("gRPC UpdateLightningFee has been called")
         if request.fee_percent:
             settings.lightning_fee_percent = request.fee_percent
@@ -170,7 +183,7 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
             raise Exception("No fee specified")
         return management_pb2.UpdateResponse()
     
-    async def UpdateAuthLimits(self, request, _):
+    async def UpdateAuthLimits(self, request, context):
         logger.debug("gRPC UpdateAuthLimits has been called")
         if request.auth_rate_limit_per_minute:
             settings.mint_auth_rate_limit_per_minute = request.auth_rate_limit_per_minute
@@ -179,6 +192,109 @@ class MintManagementRPC(management_pb2_grpc.MintServicer):
         else:
             raise Exception("No auth limit was specified")
         return management_pb2.UpdateResponse()
+
+    async def ApproveInvoice(self, request, context):
+        logger.debug(f"gRPC ApproveInvoice called for {request.payment_hash}")
+
+        fake_wallet = self._get_fake_wallet()
+        if not fake_wallet:
+            return management_pb2.ApproveInvoiceResponse(
+                success=False,
+                error="FakeWallet backend not available",
+            )
+
+        success = await fake_wallet.approve_invoice(request.payment_hash)
+        return management_pb2.ApproveInvoiceResponse(
+            success=success,
+            error=None if success else "Invoice not found or already approved",
+        )
+
+    async def GetPendingInvoices(self, request, context):
+        logger.debug("gRPC GetPendingInvoices called")
+
+        unit = Unit.sat
+        if request.unit:
+            try:
+                unit = Unit[request.unit]
+            except KeyError:
+                return management_pb2.GetPendingInvoicesResponse(invoices=[])
+
+        fake_wallet = self._get_fake_wallet(unit)
+        if not fake_wallet:
+            return management_pb2.GetPendingInvoicesResponse(invoices=[])
+
+        pending = fake_wallet.get_pending_invoices()
+        invoices = []
+        for inv in pending:
+            payment_hash = inv.get("payment_hash")
+            amount_msat = inv.get("amount_msat")
+            created = inv.get("created")
+            invoices.append(
+                management_pb2.PendingInvoice(
+                    payment_hash=payment_hash if isinstance(payment_hash, str) else "",
+                    amount_msat=amount_msat if isinstance(amount_msat, int) else 0,
+                    created=created if isinstance(created, int) else 0,
+                )
+            )
+        return management_pb2.GetPendingInvoicesResponse(invoices=invoices)
+
+    async def SettleArbitraryPayment(self, request, context):
+        logger.debug(f"gRPC SettleArbitraryPayment called for {request.checking_id}")
+
+        fake_wallet = self._get_fake_wallet()
+        if not fake_wallet:
+            return management_pb2.SettleArbitraryPaymentResponse(
+                success=False,
+                error="FakeWallet backend not available",
+            )
+
+        success = await fake_wallet.settle_arbitrary_payment(request.checking_id)
+        return management_pb2.SettleArbitraryPaymentResponse(
+            success=success,
+            error=None if success else "Payment not found",
+        )
+
+    async def RejectArbitraryPayment(self, request, context):
+        logger.debug(f"gRPC RejectArbitraryPayment called for {request.checking_id}")
+
+        fake_wallet = self._get_fake_wallet()
+        if not fake_wallet:
+            return management_pb2.RejectArbitraryPaymentResponse(
+                success=False,
+                error="FakeWallet backend not available",
+            )
+
+        success = await fake_wallet.reject_arbitrary_payment(request.checking_id)
+        return management_pb2.RejectArbitraryPaymentResponse(
+            success=success,
+            error=None if success else "Payment not found",
+        )
+
+    async def GetPendingArbitraryPayments(self, request, context):
+        logger.debug("gRPC GetPendingArbitraryPayments called")
+
+        fake_wallet = self._get_fake_wallet()
+        if not fake_wallet:
+            return management_pb2.GetPendingArbitraryPaymentsResponse(payments=[])
+
+        pending = fake_wallet.get_pending_arbitrary_payments()
+        payments = []
+        for payment in pending:
+            checking_id = payment.get("checking_id")
+            request_str = payment.get("request")
+            identifier = payment.get("identifier")
+            amount = payment.get("amount")
+            status = payment.get("status")
+            payments.append(
+                management_pb2.PendingArbitraryPayment(
+                    checking_id=checking_id if isinstance(checking_id, str) else "",
+                    request=request_str if isinstance(request_str, str) else "",
+                    identifier=identifier if isinstance(identifier, str) else "",
+                    amount=amount if isinstance(amount, int) else 0,
+                    status=status if isinstance(status, str) else "",
+                )
+            )
+        return management_pb2.GetPendingArbitraryPaymentsResponse(payments=payments)
 
 async def serve(ledger: Ledger):
     host = settings.mint_rpc_server_addr
@@ -202,11 +318,15 @@ async def serve(ledger: Ledger):
                 logger.error(f"Missing cert file: {mint_rpc_cert_path}")
             raise FileNotFoundError("Required mTLS files are missing. Please check the paths.")
 
+        assert mint_rpc_key_path is not None
+        assert mint_rpc_ca_path is not None
+        assert mint_rpc_cert_path is not None
+
         logger.info(f"Starting mTLS Management RPC service on {host}:{port}")
         # Load server credentials
         server_credentials = grpc.ssl_server_credentials(
-            ((open(mint_rpc_key_path, 'rb').read(), open(mint_rpc_cert_path, 'rb').read()),), # type: ignore
-            root_certificates=open(mint_rpc_ca_path, 'rb').read(), # type: ignore
+            [(open(mint_rpc_key_path, 'rb').read(), open(mint_rpc_cert_path, 'rb').read())],
+            root_certificates=open(mint_rpc_ca_path, 'rb').read(),
             require_client_auth=True,
         )
         server.add_secure_port(f"{host}:{port}", server_credentials)

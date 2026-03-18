@@ -3,7 +3,7 @@ import hashlib
 import math
 from datetime import datetime
 from os import urandom
-from typing import AsyncGenerator, Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Dict, List, Optional, Set, Tuple
 
 from loguru import logger
 
@@ -73,8 +73,8 @@ class FakeWallet(LightningBackend):
     ).hex()
 
     # Manual approval tracking
-    manually_approved_invoices: set = set()  # payment_hashes approved for minting
-    arbitrary_payments: Dict[str, dict] = {}  # checking_id -> {request, amount, status}
+    manually_approved_invoices: Set[str] = set()  # payment_hashes approved for minting
+    arbitrary_payments: Dict[str, Dict[str, object]] = {}
 
     supported_units = {Unit.sat, Unit.msat, Unit.usd, Unit.eur}
     balance: Dict[Unit, Amount] = {
@@ -126,6 +126,22 @@ class FakeWallet(LightningBackend):
         else:
             self.balance[self.unit] -= Amount(self.unit, amount)
 
+    def update_balance_from_sat_amount(self, amount_sat: int, incoming: bool) -> None:
+        amount = amount_sat
+        if self.unit == Unit.sat:
+            amount = amount_sat
+        elif self.unit == Unit.msat:
+            amount = amount_sat * 1000
+        elif self.unit == Unit.usd or self.unit == Unit.eur:
+            amount = math.ceil(amount_sat / 1e8 * self.fake_btc_price)
+        else:
+            raise NotImplementedError()
+
+        if incoming:
+            self.balance[self.unit] += Amount(self.unit, amount)
+        else:
+            self.balance[self.unit] -= Amount(self.unit, amount)
+
     async def approve_invoice(self, payment_hash: str) -> bool:
         """Manually approve a pending invoice for minting.
 
@@ -165,7 +181,7 @@ class FakeWallet(LightningBackend):
         logger.info(f"Manually approved invoice {payment_hash}")
         return True
 
-    def get_pending_invoices(self) -> List[Dict]:
+    def get_pending_invoices(self) -> List[Dict[str, object]]:
         """Get all invoices awaiting approval.
 
         Returns:
@@ -325,13 +341,13 @@ class FakeWallet(LightningBackend):
             ok=True, checking_id=payment_hash, payment_request=payment_request
         )
 
-    async def pay_invoice(self, quote: MeltQuote, fee_limit: int) -> PaymentResponse:
+    async def pay_invoice(self, quote: MeltQuote, fee_limit_msat: int) -> PaymentResponse:
         if settings.fakewallet_pay_invoice_state_exception:
             raise Exception("FakeWallet pay_invoice exception")
 
         # Try to decode as bolt11 first
         invoice = None
-        checking_id = None
+        checking_id = ""
         is_arbitrary = False
 
         if self._is_bolt11(quote.request):
@@ -352,9 +368,11 @@ class FakeWallet(LightningBackend):
                 )
             is_arbitrary = True
 
+        arbitrary_amount_sat = 0
         if is_arbitrary:
             checking_id = self._get_checking_id_for_arbitrary(quote.request)
             identifier, amount = self._parse_arbitrary_request(quote.request)
+            arbitrary_amount_sat = amount
 
             # Track the arbitrary payment
             self.arbitrary_payments[checking_id] = {
@@ -377,16 +395,27 @@ class FakeWallet(LightningBackend):
             state = settings.fakewallet_pay_invoice_state
             if state == "SETTLED" and invoice:
                 self.update_balance(invoice, incoming=False)
-            elif state == "SETTLED" and is_arbitrary:
-                # Mark arbitrary payment as settled
-                if checking_id in self.arbitrary_payments:
-                    self.arbitrary_payments[checking_id]["status"] = "settled"
+            elif state == "SETTLED" and is_arbitrary and checking_id:
+                if checking_id not in self.arbitrary_payments:
+                    self.arbitrary_payments[checking_id] = {
+                        "request": quote.request,
+                        "identifier": quote.request,
+                        "amount": arbitrary_amount_sat,
+                        "status": "pending",
+                    }
+                await self.settle_arbitrary_payment(checking_id)
+
+            preimage = "0" * 64
+            if invoice:
+                preimage = self.payment_secrets.get(invoice.payment_hash) or preimage
+            elif checking_id:
+                preimage = self.payment_secrets.get(checking_id) or preimage
 
             return PaymentResponse(
                 result=PaymentResult[state],
                 checking_id=checking_id,
                 fee=Amount(unit=self.unit, amount=settings.fakewallet_arbitrary_melt_fee_sat),
-                preimage=self.payment_secrets.get(checking_id) or "0" * 64,
+                preimage=preimage,
             )
 
         # Default behavior for bolt11
@@ -472,7 +501,7 @@ class FakeWallet(LightningBackend):
     ) -> PaymentQuoteResponse:
         # Try to decode as bolt11 first
         invoice_obj = None
-        checking_id = None
+        checking_id = ""
         amount_msat = 0
 
         if self._is_bolt11(melt_quote.request):
@@ -519,6 +548,9 @@ class FakeWallet(LightningBackend):
         else:
             raise NotImplementedError()
 
+        if not checking_id:
+            raise ValueError("Could not determine checking_id for payment quote")
+
         return PaymentQuoteResponse(
             checking_id=checking_id,
             fee=fees.to(self.unit, round="up"),
@@ -530,7 +562,73 @@ class FakeWallet(LightningBackend):
             value: Bolt11 = await self.paid_invoices_queue.get()
             yield value.payment_hash
 
-    def get_pending_arbitrary_payments(self) -> List[Dict]:
+    async def settle_arbitrary_payment(self, checking_id: str) -> bool:
+        """Mark an arbitrary payment as settled (approved).
+
+        This is the "I approve" action for arbitrary melt requests.
+        After calling this, get_payment_status will return SETTLED.
+
+        Args:
+            checking_id: The checking ID of the arbitrary payment
+
+        Returns:
+            True if payment was found and settled, False otherwise
+        """
+        if checking_id not in self.arbitrary_payments:
+            logger.warning(f"Arbitrary payment {checking_id} not found")
+            return False
+
+        payment = self.arbitrary_payments[checking_id]
+
+        if payment["status"] == "settled":
+            logger.debug(f"Arbitrary payment {checking_id} already settled")
+            return True
+
+        if payment["status"] == "failed":
+            logger.warning(f"Cannot settle previously rejected payment {checking_id}")
+            return False
+
+        payment["status"] = "settled"
+        amount_obj = payment.get("amount", 0)
+        amount_sat = amount_obj if isinstance(amount_obj, int) else 0
+        if amount_sat > 0:
+            self.update_balance_from_sat_amount(amount_sat, incoming=False)
+        logger.info(
+            f"Settled arbitrary payment {checking_id[:16]}... "
+            f"for {payment['identifier']} amount={payment['amount']}"
+        )
+        return True
+
+    async def reject_arbitrary_payment(self, checking_id: str) -> bool:
+        """Mark an arbitrary payment as failed (rejected).
+
+        Args:
+            checking_id: The checking ID of the arbitrary payment
+
+        Returns:
+            True if payment was found and rejected, False otherwise
+        """
+        if checking_id not in self.arbitrary_payments:
+            logger.warning(f"Arbitrary payment {checking_id} not found")
+            return False
+
+        payment = self.arbitrary_payments[checking_id]
+        if payment["status"] == "settled":
+            logger.warning(f"Cannot reject already-settled payment {checking_id}")
+            return False
+
+        if payment["status"] == "failed":
+            logger.debug(f"Arbitrary payment {checking_id} already rejected")
+            return True
+
+        payment["status"] = "failed"
+        logger.info(
+            f"Rejected arbitrary payment {checking_id[:16]}... "
+            f"for {payment['identifier']}"
+        )
+        return True
+
+    def get_pending_arbitrary_payments(self) -> List[Dict[str, object]]:
         """Get all arbitrary payments pending approval.
 
         Returns:
@@ -548,7 +646,7 @@ class FakeWallet(LightningBackend):
             if payment["status"] == "pending"
         ]
 
-    def get_arbitrary_payment(self, checking_id: str) -> Optional[Dict]:
+    def get_arbitrary_payment(self, checking_id: str) -> Optional[Dict[str, object]]:
         """Get details of an arbitrary payment.
 
         Args:

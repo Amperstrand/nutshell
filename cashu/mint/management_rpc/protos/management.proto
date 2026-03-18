@@ -46,6 +46,17 @@ service Mint {
     rpc UpdateLightningFee(UpdateLightningFeeRequest) returns (UpdateResponse) {}
     // UpdateAuthLimits updates the authentication rate limits for the mint.
     rpc UpdateAuthLimits(UpdateAuthLimitsRequest) returns (UpdateResponse) {}
+
+    // ApproveInvoice manually approves a pending mint invoice on FakeWallet.
+    rpc ApproveInvoice(ApproveInvoiceRequest) returns (ApproveInvoiceResponse) {}
+    // GetPendingInvoices lists mint invoices that are pending manual approval.
+    rpc GetPendingInvoices(GetPendingInvoicesRequest) returns (GetPendingInvoicesResponse) {}
+    // SettleArbitraryPayment marks an arbitrary melt request as settled.
+    rpc SettleArbitraryPayment(SettleArbitraryPaymentRequest) returns (SettleArbitraryPaymentResponse) {}
+    // RejectArbitraryPayment marks an arbitrary melt request as failed.
+    rpc RejectArbitraryPayment(RejectArbitraryPaymentRequest) returns (RejectArbitraryPaymentResponse) {}
+    // GetPendingArbitraryPayments lists arbitrary melt requests pending approval.
+    rpc GetPendingArbitraryPayments(GetPendingArbitraryPaymentsRequest) returns (GetPendingArbitraryPaymentsResponse) {}
 }
 
 // GetInfoRequest is an empty message used to request general mint information.
@@ -342,4 +353,78 @@ message UpdateAuthLimitsRequest {
     optional uint64 auth_rate_limit_per_minute = 1;
     // Optional: The maximum number of blind tokens allowed for authentication.
     optional uint64 auth_max_blind_tokens = 2;
+}
+
+// ApproveInvoiceRequest requests manual approval of a pending mint invoice.
+message ApproveInvoiceRequest {
+    // Payment hash of the invoice to approve.
+    string payment_hash = 1;
+}
+
+// ApproveInvoiceResponse returns the result of a manual invoice approval.
+message ApproveInvoiceResponse {
+    // Whether the approval was successful.
+    bool success = 1;
+    // Error message if approval failed.
+    optional string error = 2;
+}
+
+// GetPendingInvoicesRequest requests pending mint invoices.
+message GetPendingInvoicesRequest {
+    // Optional: filter by unit.
+    optional string unit = 1;
+}
+
+// PendingInvoice contains a pending mint invoice summary.
+message PendingInvoice {
+    string payment_hash = 1;
+    int64 amount_msat = 2;
+    int64 created = 3;
+}
+
+// GetPendingInvoicesResponse returns mint invoices pending approval.
+message GetPendingInvoicesResponse {
+    repeated PendingInvoice invoices = 1;
+}
+
+// SettleArbitraryPaymentRequest requests approval of an arbitrary melt payment.
+message SettleArbitraryPaymentRequest {
+    // Checking ID of the arbitrary payment to settle.
+    string checking_id = 1;
+}
+
+// SettleArbitraryPaymentResponse returns the settlement result.
+message SettleArbitraryPaymentResponse {
+    bool success = 1;
+    optional string error = 2;
+}
+
+// RejectArbitraryPaymentRequest requests rejection of an arbitrary melt payment.
+message RejectArbitraryPaymentRequest {
+    // Checking ID of the arbitrary payment to reject.
+    string checking_id = 1;
+}
+
+// RejectArbitraryPaymentResponse returns the rejection result.
+message RejectArbitraryPaymentResponse {
+    bool success = 1;
+    optional string error = 2;
+}
+
+// GetPendingArbitraryPaymentsRequest requests arbitrary payments pending approval.
+message GetPendingArbitraryPaymentsRequest {
+}
+
+// PendingArbitraryPayment contains a pending arbitrary melt payment summary.
+message PendingArbitraryPayment {
+    string checking_id = 1;
+    string request = 2;
+    string identifier = 3;
+    int64 amount = 4;
+    string status = 5;
+}
+
+// GetPendingArbitraryPaymentsResponse returns arbitrary payments pending approval.
+message GetPendingArbitraryPaymentsResponse {
+    repeated PendingArbitraryPayment payments = 1;
 }
