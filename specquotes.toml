@@ -1,0 +1,18 @@
+# greatspectations spec-quote drift config for Nutshell
+# Tool: https://github.com/rustyrussell/greatspectations
+#
+# Python uses '#' comments by default — no custom CLI flags needed!
+# Comment marker syntax:
+#   # NUT #04: <verbatim spec quote>
+#
+# Setup:
+#   git clone --depth=1 https://github.com/cashubtc/nuts.git nuts
+#   pip install git+https://github.com/rustyrussell/greatspectations.git
+#
+# Run:
+#   spectate check --config specquotes.toml cashu/**/*.py
+
+[sources.NUT]
+format = "markdown"
+dir = "nuts"
+pattern = "{id:02d}.md"

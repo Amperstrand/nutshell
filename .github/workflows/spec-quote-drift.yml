@@ -1,0 +1,63 @@
+---
+# greatspectations spec-quote drift detection for Nutshell experiment.
+# Python uses '#' comments — greatspectations default settings work.
+# See: https://github.com/Amperstrand/cdk/issues/1
+
+name: spec-quote-drift
+
+on:
+  push:
+    branches: [experiment/greatspectations-audit]
+  pull_request:
+    branches: [experiment/greatspectations-audit]
+  workflow_dispatch:
+
+jobs:
+  spectate:
+    name: greatspectations spec-quote check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install greatspectations
+        run: |
+          git clone https://github.com/rustyrussell/greatspectations.git /tmp/gs
+          cd /tmp/gs && git checkout 433e1f2e2d0f9645676ebdfdc9ae06385f247913
+          pip install -e /tmp/gs
+
+      - name: Clone Cashu NUT spec
+        run: git clone https://github.com/cashubtc/nuts.git nuts && cd nuts && git checkout 734f60efdd2feeaaf96acb21e1b632c6d35419de
+
+      - name: Run spectate check
+        run: |
+          spectate check --config specquotes.toml \
+            -k cashu/mint/ledger.py cashu/mint/conditions.py cashu/mint/verification.py \
+            cashu/mint/cache.py cashu/mint/auth/*.py \
+            cashu/core/crypto/*.py cashu/core/secret.py cashu/core/p2pk.py cashu/core/htlc.py \
+            cashu/core/mint_info.py cashu/core/base.py
+
+      - name: Run spectate coverage
+        run: |
+          spectate check --config specquotes.toml \
+            --coverage .coverage \
+            -k cashu/mint/ledger.py cashu/mint/conditions.py cashu/mint/verification.py \
+            cashu/mint/cache.py cashu/mint/auth/*.py \
+            cashu/core/crypto/*.py cashu/core/secret.py cashu/core/p2pk.py cashu/core/htlc.py \
+            cashu/core/mint_info.py cashu/core/base.py
+          spectate coverage --config specquotes.toml --coverage .coverage --all-sections
+        continue-on-error: true
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-coverage-report
+          path: .coverage
+          if-no-files-found: ignore
+          retention-days: 14
