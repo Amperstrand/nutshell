@@ -45,7 +45,12 @@ class LedgerSpendingConditions:
         - if neither spending path is satisfied
         """
 
+        # NUT #11: In the basic case, when spending a locked Proof, the mint requires one
+        #  valid Schnorr signature in `Proof.witness.signatures` on `Proof.secret` by the
+        #  public key in `Proof.secret.data`.
         p2pk_secret = secret
+        # NUT #11: The message to sign MUST be constructed using the **unescaped** secret string
+        # NUT #11: The `secret` field is **signed as a string**.
         message_to_sign = message_to_sign or proof.secret
 
         # if a sigflag other than SIG_INPUTS is present, we return True
@@ -56,6 +61,9 @@ class LedgerSpendingConditions:
             return True
 
         # Build the main pubkeys list (always available)
+        # NUT #11: If the `pubkeys` tag is present, the `Proof` is spendable only if a valid
+        #  signature is given by **at least ONE** of the public keys contained in the
+        #  `Secret.data` field or the `pubkeys` tag.
         main_pubkeys: List[str] = []
         if SecretKind(p2pk_secret.kind) == SecretKind.P2PK:
             main_pubkeys = [p2pk_secret.data]
@@ -89,6 +97,9 @@ class LedgerSpendingConditions:
                 return True
 
         # Check if locktime has passed and refund path is available
+        # NUT #11: Both [Locktime Multisig](#locktime-multisig) and [Refund Multisig](#refund-multisig)
+        #  conditions apply if the `refund` tag is present, otherwise the proof is considered
+        #  unlocked and spendable without a witness signature.
         now = time.time()
         if p2pk_secret.locktime and p2pk_secret.locktime < now:
             logger.trace(
@@ -96,6 +107,8 @@ class LedgerSpendingConditions:
             )
 
             refund_pubkeys = p2pk_secret.tags.get_tag_all("refund")
+            # NUT #11: the `Proof` can be spent if a valid signature is given by **at least
+            #  ONE** of the public keys contained in the `refund` tag.
             refund_n_sigs = p2pk_secret.n_sigs_refund or 1
 
             if refund_pubkeys:
@@ -133,6 +146,12 @@ class LedgerSpendingConditions:
         signatures = [s.lower() for s in signatures]
 
         # enforce that x-coordinates are unique
+        # NUT #11: Each key **MUST** appear at most **ONCE** per [multi-signature](#Multisig)
+        #  pathway. The same key **MAY** appear in both pathways.
+        # NUT #11: Keys are compared using their lowercase x-coordinate (`02` or `03` y-parity
+        #  prefix ignored).
+        # NUT #11: If a pathway contains a duplicate key, the P2PK secret is malformed and the
+        #  Proof **MUST** be rejected as unspendable.
         x_only_pubkeys = [p[2:66] if len(p) in [66, 130] else p for p in pubkeys]
         if len(set(x_only_pubkeys)) != len(x_only_pubkeys):
             raise TransactionError("pubkeys must have unique x-coordinates.")
@@ -150,6 +169,9 @@ class LedgerSpendingConditions:
 
         # INPUTS: check signatures against pubkey
         # we expect the signature to be on the pubkey (=message) itself
+        # NUT #11: If `n_sigs` or `n_sigs_refund` is not a positive integer, or exceeds the
+        #  total number of keys in its pathway, the P2PK secret is malformed and the Proof
+        #  **MUST** be rejected as unspendable.
         n_sigs_required = n_sigs_required or 1
         if not n_sigs_required > 0:
             raise TransactionError("n_sigs must be positive.")
@@ -162,6 +184,8 @@ class LedgerSpendingConditions:
 
         n_pubkeys_with_valid_sigs = 0
         # loop over all unique pubkeys in input
+        # NUT #11: we expect a minimum number of unique public keys with valid signatures
+        #  instead of expecting a minimum number of signatures.
         for pubkey in unique_pubkeys:
             for i, input_sig in enumerate(signatures):
                 logger.trace(f"verifying signature {input_sig} by pubkey {pubkey}.")
@@ -221,6 +245,8 @@ class LedgerSpendingConditions:
         # HTLC
         if SecretKind(secret.kind) == SecretKind.HTLC:
             htlc_secret = HTLCSecret.from_secret(secret)
+            # NUT #14: Mints and wallets **must verify** this equality before accepting the
+            #  spend as valid:
             nut14.verify_htlc_spending_conditions(proof)
             return self._verify_p2pk_sig_inputs(proof, htlc_secret)
 
@@ -313,6 +339,8 @@ class LedgerSpendingConditions:
             return True
 
         # verify that all secrets are of the same kind
+        # NUT #11: If one input has the signature flag `SIG_ALL`, all other inputs MUST have
+        #  the same `Secret.data` and `Secret.tags`, and by extension, also be `SIG_ALL`.
         try:
             secret = self._verify_all_secrets_equal_and_return(proofs)
         except Exception:
@@ -340,6 +368,9 @@ class LedgerSpendingConditions:
         )
 
 
+        # NUT #11: only **the first input of a transaction requires a witness** that covers all
+        #  other inputs and outputs of the transaction. All signatures by the signing public
+        #  keys MUST be provided in the `Proof.witness` of the first input of the transaction.
         first_proof = proofs[0]
         if not first_proof.witness:
             raise TransactionError("no witness in proof.")
@@ -416,6 +447,7 @@ class LedgerSpendingConditions:
             Implicitly enforces many other conditions such as all input Secrets
             being the same except for the nonce (see verify_same_kinds_and_return()).
         """
+        # NUT #11: `SIG_INPUTS` is only enforced if no input is `SIG_ALL`.
         if not self._inputs_require_sigall(proofs):
             # no input requires sigall spending condition
             return True

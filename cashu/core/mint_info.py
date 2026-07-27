@@ -27,18 +27,42 @@ def _match_protected_endpoint(endpoint_path: str, request_path: str) -> bool:
         return request_path == endpoint_path
 
 
+# NUT #06: This endpoint returns information about the mint that a wallet can show
+# to the user and use to make decisions on how to interact with the mint.
 class MintInfo(BaseModel):
+    # NUT #06: `name` is the name of the mint and should be recognizable.
     name: Optional[str]
+    # NUT #06: `pubkey` is the hex pubkey of the mint.
     pubkey: Optional[str]
+    # NUT #06: `version` is the implementation name and the version of the software
+    # running on this mint separated with a slash "/".
     version: Optional[str]
+    # NUT #06: `description` is a short description of the mint that can be shown in
+    # the wallet next to the mint's name.
     description: Optional[str]
+    # NUT #06: `description_long` is a long description that can be shown in an
+    # additional field.
     description_long: Optional[str]
+    # NUT #06: `contact` is an array of contact objects to reach the mint operator.
+    # A contact object consists of two fields. The `method` field denotes the contact
+    # method (like "email"), the `info` field denotes the identifier (like "contact@me.com").
     contact: Optional[List[MintInfoContact]]
+    # NUT #06: `motd` is the message of the day that the wallet must display to the
+    # user. It should only be used to display important announcements to users, such
+    # as scheduled maintenances.
     motd: Optional[str]
+    # NUT #06: `icon_url` is the URL pointing to an image to be used as an icon for
+    # the mint. Recommended to be squared in shape.
     icon_url: Optional[str]
+    # NUT #06: `urls` is the list of endpoint URLs where the mint is reachable from.
     urls: Optional[List[str]]
+    # NUT #06: `tos_url` is the URL pointing to the Terms of Service of the mint.
     tos_url: Optional[str]
+    # NUT #06: `time` is the current time set on the server. The value is passed as a
+    # Unix timestamp integer.
     time: Optional[int]
+    # NUT #06: `nuts` indicates each NUT specification that the mint supports and its
+    # settings. The settings are defined in each NUT separately.
     nuts: Dict[int, Any]
 
     def __str__(self):

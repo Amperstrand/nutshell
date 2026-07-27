@@ -18,6 +18,10 @@ class Tags(RootModel):
     Tags are used to encode additional information in the Secret of a Proof.
     """
 
+    # NUT #10: The optional `tags` field, is an array of arrays of non-empty strings.
+    #  Each individual tag is an array of **ONE or more strings**. The first element of
+    #  the tag array is known as the tag _name_ or _key_ and the subsequent string(s)
+    #  are the _tag value(s)_.
     root: List[List[str]] = []
 
     def __init__(self, tags: Optional[List[List[str]]] = None, **kwargs):
@@ -59,6 +63,11 @@ class Tags(RootModel):
 class Secret(BaseModel):
     """Describes spending condition encoded in the secret field of a Proof."""
 
+    # NUT #10: The well-known `Secret` stored in `Proof.secret` is a JSON of the format
+    # NUT #10: - `kind` is the kind of the spending condition
+    #  - `nonce` is a unique random string
+    #  - `data` expresses the spending condition specific to each kind
+    #  - `tags` hold additional data committed to and can be used for feature extensions
     kind: str
     data: str
     tags: Tags

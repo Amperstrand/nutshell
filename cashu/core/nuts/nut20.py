@@ -22,6 +22,8 @@ def int_to_minimal_bytes(val: int) -> bytes:
 
 
 def construct_message(quote_id: str, outputs: List[BlindedMessage]) -> bytes:
+    # NUT #20: `b"Cashu_MintQuoteSig_v1"` is the domain-separation tag as raw ASCII bytes, not length-prefixed.
+    # NUT #20: `||` denotes byte concatenation and `len32(x)` is the 32-bit (4-byte) big-endian length of the byte array `x` in bytes.
     dst = b"Cashu_MintQuoteSig_v1"
     quote_bytes = quote_id.encode("utf-8")
     msg = dst + len(quote_bytes).to_bytes(4, "big") + quote_bytes
@@ -56,6 +58,7 @@ def verify_mint_quote(
     public_key: str,
     signature: str,
 ) -> bool:
+    # NUT #20: To mint a quote where a public key was provided, the wallet includes a signature on `msg_to_sign` in the `PostMintBolt11Request`.
     pubkey = PublicKeyXOnly(bytes.fromhex(public_key)[1:])
     sig = bytes.fromhex(signature)
 

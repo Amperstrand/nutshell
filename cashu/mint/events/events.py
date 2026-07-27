@@ -46,6 +46,7 @@ class LedgerEventManager:
         return return_dict
 
     async def submit(self, event: LedgerEvent) -> None:
+        # NUT #17: `WsNotification`'s are sent from the mint to the wallet and contain subscription data
         if not isinstance(event, LedgerEvent):
             raise ValueError(f"Unsupported event object type {type(event)}")
 

@@ -9,11 +9,18 @@ from bip32 import BIP32
 
 from .secp import PrivateKey, PublicKey
 
+# NUT #02: Mints can have multiple keysets at the same time but **MUST** have at least one `active` keyset (see [NUT-01][01]).
+# NUT #02: new outputs (`BlindedMessages` and `BlindSignatures`) **MUST** be from `active` keysets only.
+# NUT #02: When constructing outputs for a transaction, wallets **MUST** choose only `active` keysets (see [NUT-00][00]).
+# NUT #02: When constructing a transaction with ecash `inputs` (example: `/v1/swap` or `/v1/melt`), wallets **MUST** add fees to the inputs or, vice versa, subtract from the outputs.
 
+# NUT #13: the wallet **MUST** keep track of a separate counter for each keyset `k` it uses. The wallet **MUST** keep track of multiple keysets for every mint it interacts with.
+# NUT #13: `m / 129372' / 0' / keyset_k_int' / counter' / secret||r`
 def derive_keys(mnemonic: str, derivation_path: str, amounts: List[int]):
     """
     Deterministic derivation of keys for 2^n values.
     """
+    # NUT #01: Keyset amount values **MUST** represent an amount in the Minor Unit of that currency.
     bip32 = BIP32.from_seed(mnemonic.encode())
     orders_str = [f"/{a}'" for a in range(len(amounts))]
     return {
@@ -48,6 +55,7 @@ def derive_pubkey(seed: str) -> PublicKey:
     return pubkey
 
 
+# NUT #01: The mint **MUST** use the [compressed Secp256k1 public key format](https://learnmeabitcoin.com/technical/public-key#public-key-format) to represent its public keys.
 def derive_pubkeys(keys: Dict[int, PrivateKey], amounts: List[int]):
     return {amt: keys[amt].public_key for amt in amounts}
 
@@ -89,6 +97,7 @@ def derive_keyset_id_v2(
     keyset_id_bytes += f"|unit:{unit}".encode("utf-8")
 
     # add the input_fee_ppk if > 0
+    # NUT #02: If input_fee_ppk is omitted, null, or 0, it MUST be omitted from the preimage.
     if input_fee_ppk > 0:
         keyset_id_bytes += f"|input_fee_ppk:{input_fee_ppk}".encode("utf-8")
 

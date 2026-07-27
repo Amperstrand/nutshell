@@ -49,6 +49,10 @@ class AuthLedger(Ledger):
         self.oicd_discovery_url = settings.mint_auth_oicd_discovery_url or ""
 
     async def init_auth(self):
+        # NUT #21: The OIDC service MUST NOT use a client secret.
+        # NUT #21: The OIDC service MUST enable the _authorization code flow_ with PKCE for public clients, so that an authorization code can be exchanged for an access token and a refresh token.
+        # NUT #21: To support the OpenID Connect Authorization Code flow, the OIDC service MUST allow redirect URLs that correspond to the wallets it wants to support.
+        # NUT #21: The OIDC service MUST also allow redirects to the URL `http://localhost:33388/callback`.
         if not self.oicd_discovery_url:
             raise Exception("Missing OpenID Connect discovery URL.")
         logger.info(f"Initializing OpenID Connect: {self.oicd_discovery_url}")
@@ -105,6 +109,7 @@ class AuthLedger(Ledger):
         try:
             # Use PyJWKClient to fetch the appropriate key based on the token's header
             signing_key = self.jwks_client.get_signing_key_from_jwt(clear_auth_token)
+            # NUT #21: The OIDC service MUST support at least one of the two asymmetric JWS signature algorithms for access token and ID token signatures: `ES256` and `RS256`.
             decoded = jwt.decode(
                 clear_auth_token,
                 signing_key.key,
@@ -153,6 +158,10 @@ class AuthLedger(Ledger):
             await self.auth_crud.create_user(user=user, db=self.db)
         return user
 
+    # NUT #21: **Exact match**: no trailing `*` → request path MUST equal `path`
+    # NUT #21: **Prefix match**: ends with `*` → request path MUST start with the prefix (`*` removed)
+    # NUT #21: The `*` wildcard, if present, MUST be the final character only.
+    # NUT #21: Wallets **MUST** treat mint provided `path` values as untrusted input and use exact or prefix matching only. Never use regex matching on untrusted input.
     async def verify_clear_auth(self, clear_auth_token: str) -> User:
         """Verify the clear-auth JWT token and return the user.
 
@@ -190,6 +199,9 @@ class AuthLedger(Ledger):
     ) -> List[BlindedSignature]:
         """Mints auth tokens. Returns a list of promises.
 
+        # NUT #22: The mint MUST return DLEQ proofs for every blind signature in `PostAuthBlindMintResponse` as defined in [NUT-12](./12.md)
+        # NUT #22: To prevent pinning, wallets MUST validate the DLEQ proofs `dleq` as defined in [NUT-12](./12.md). Should `AuthProofs` be sent to another user of the mint, it MUST include the `dleq` proof so that the receiving user can validate it.
+
         Args:
             outputs (List[BlindedMessage]): Outputs to sign.
             user (User): Authenticated user.
@@ -217,6 +229,13 @@ class AuthLedger(Ledger):
 
         return promises
 
+    # NUT #22: Mints **MUST** accept and decode both padded and unpadded forms.
+    # NUT #22: To protect the privacy of the wallet, the BAT MUST NOT contain the `dleq` proof when it is sent to the mint in the request header.
+    # NUT #22: The wallet MUST delete the `AuthProof` after a successful request
+    # NUT #22: **Exact match**: no trailing `*` → request path MUST equal `path`
+    # NUT #22: **Prefix match**: ends with `*` → request path MUST start with the prefix (`*` removed)
+    # NUT #22: The `*` wildcard, if present, MUST be the final character only.
+    # NUT #22: Wallets **MUST** treat mint provided `path` values as untrusted input and use exact or prefix matching only. Never use regex matching on untrusted input.
     @asynccontextmanager
     async def verify_blind_auth(self, blind_auth_token):
         """Wrapper context that puts blind auth tokens into pending list and

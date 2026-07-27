@@ -31,6 +31,7 @@ from .event_model import LedgerEvent
 
 
 class LedgerEventClientManager:
+    # NUT #17: `NUT-17` uses the JSON-RPC format for all messages.
     websocket: WebSocket
     subscriptions: dict[
         JSONRPCSubscriptionKinds, dict[str, List[str]]
@@ -140,6 +141,8 @@ class LedgerEventClientManager:
 
     async def _handle_request(self, data: JSONRPCRequest) -> JSONRPCResponse:
         logger.debug(f"Received websocket message: {data}")
+        # NUT #17: `WsRequestMethod` is a enum of strings with the supported commands `"subscribe"` and `"unsubscribe"`:
+        # NUT #17: A `WsResponse` is returned by the mint to both the `"subscribe"` and `"unsubscribe"` commands and indicates whether the request was successful:
         if data.method == JSONRPCMethods.SUBSCRIBE.value:
             subscribe_params = JSONRPCSubscribeParams.model_validate(data.params)
             self.add_subscription(
@@ -194,6 +197,7 @@ class LedgerEventClientManager:
         asyncio.create_task(self._init_subscriptions(subId, filters, kind))
 
     def remove_subscription(self, subId: str) -> None:
+        # NUT #17: The wallet should always unsubscribe any subscriptions that is isn't interested in anymore.
         removed = False
         for kind, sub_filters in self.subscriptions.items():
             for filter, subs in sub_filters.items():
@@ -218,6 +222,7 @@ class LedgerEventClientManager:
     async def _init_subscriptions(
         self, subId: str, filters: List[str], kind: JSONRPCSubscriptionKinds
     ):
+        # NUT #17: **Important:** If the subscription is accepted by the mint, the mint MUST first respond with the _current_ state of the subscribed object and continue sending any further updates to it.
         results = []
         async with self.db_read.db.connect() as conn:
             if kind == JSONRPCSubscriptionKinds.BOLT11_MINT_QUOTE:

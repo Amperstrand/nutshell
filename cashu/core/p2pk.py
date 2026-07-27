@@ -10,9 +10,11 @@ from .secret import Secret, SecretKind
 
 
 class SigFlags(Enum):
-    # require signatures only on the inputs (default signature flag)
+    # NUT #11: `SIG_INPUTS` requires valid signatures on all inputs independently. It is
+    #  the default signature flag and will be applied if the `sigflag` tag is absent.
     SIG_INPUTS = "SIG_INPUTS"
-    # require signatures on inputs and outputs
+    # NUT #11: `SIG_ALL` requires valid signatures on all inputs and on all outputs of a
+    #  transaction.
     SIG_ALL = "SIG_ALL"
 
 
@@ -21,6 +23,8 @@ class P2PKSecret(Secret):
     def from_secret(cls, secret: Secret):
         if SecretKind(secret.kind) != SecretKind.P2PK:
             raise InvalidProofsError("Secret is not a P2PK secret")
+        # NUT #11: If a P2PK secret has any other signature flag value, the P2PK secret is
+        #  malformed and the Proof **MUST** be rejected as unspendable.
         if secret.tags.get_tag("sigflag") and secret.tags.get_tag("sigflag") not in [
             SigFlags.SIG_INPUTS.value,
             SigFlags.SIG_ALL.value,
@@ -52,6 +56,8 @@ class P2PKSecret(Secret):
 
 
 def schnorr_sign(message: bytes, private_key: PrivateKey) -> bytes:
+    # NUT #11: We use `libsecp256k1`'s serialized 64 byte Schnorr signatures on the SHA256
+    #  hash of the message to sign.
     signature = private_key.sign_schnorr(
         hashlib.sha256(message).digest(),
         None,  # type: ignore

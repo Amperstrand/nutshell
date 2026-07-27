@@ -93,6 +93,7 @@ async def keysets() -> KeysetsResponse:
     return KeysetsResponse(keysets=keysets)
 
 
+# NUT #22: To access this endpoint the wallet MUST provide a valid CAT (obtained via [NUT-21][21]) in its request header, IF this endpoint is marked as protected in the info response of the mint as per [NUT-21][21].
 @auth_router.post(
     "/v1/auth/blind/mint",
     name="Mint blind auth tokens",

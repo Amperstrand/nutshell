@@ -142,6 +142,8 @@ class LedgerVerification(
             )
         # Verify amounts of outputs
         # we skip the amount check for NUT-8 change outputs (which can have amount 0)
+        # NUT #08: The `amount` field in the `BlindedMessage`s here are ignored by `Bob`
+        # so they can be set to any arbitrary value by `Alice`
         if not skip_amount_check:
             if not all([self._verify_amount(o.amount) for o in outputs]):
                 raise TransactionError("invalid amount.")
@@ -349,6 +351,8 @@ class LedgerVerification(
         signature: Optional[str],
     ) -> bool:
         """Verify signature on quote id and outputs"""
+        # NUT #20: `pubkey` is the compressed secp256k1 public key (33 bytes, hex-encoded) that will be required for signature verification during the minting operation. The mint will only mint ecash after receiving a valid signature from the corresponding private key in the subsequent `PostMintRequest`.
+        # NUT #20: If the wallet user `Alice` does not include a signature on the `PostMintBolt11Request` but did include a `pubkey` in the `PostMintBolt11QuoteRequest` then `Bob` **MUST** respond with an error.
         if not quote.pubkey:
             return True
         if not signature:

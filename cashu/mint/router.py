@@ -466,6 +466,7 @@ async def mint_batch(
     return resp
 
 
+# NUT #17: The websocket is reachable via the mint's URL path `/v1/ws`
 @router.websocket("/v1/ws", name="Websocket endpoint for subscriptions")
 async def websocket_endpoint(websocket: WebSocket):
     limit_websocket(websocket)

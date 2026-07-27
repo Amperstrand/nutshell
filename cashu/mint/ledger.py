@@ -232,6 +232,9 @@ class Ledger(
 
     # ------- ECASH -------
 
+    # NUT #08: `Bob` **MUST** return the all blank signatures with a value greater than
+    # 0 in the same order as the blank outputs were received and should omit all blind
+    # signatures with value 0.
     async def _generate_change_promises(
         self,
         fee_provided: int,
@@ -262,6 +265,9 @@ class Ledger(
             List[BlindedSignature]: Signatures on the outputs.
         """
         # we make sure that the fee is positive
+        # NUT #08: If the `overpaid_fees = input_amount - fees - total_paid` is positive,
+        # `Bob` decomposes it to amounts supported by the keyset, typically `2^n`, and
+        # imprints them into the `blank_outputs` provided by `Alice`.
         overpaid_fee = fee_provided - fee_paid
 
         if overpaid_fee <= 0 or outputs is None:
@@ -331,6 +337,7 @@ class Ledger(
         if settings.mint_bolt11_disable_mint:
             raise NotAllowedError("Minting with bolt11 is disabled.")
 
+        # NUT #04: `method` **MUST** match `[a-z0-9_-]+`.
         unit, method = self._verify_and_get_unit_method(
             quote_request.unit, Method.bolt11.name
         )
@@ -377,6 +384,9 @@ class Ledger(
         elif invoice_obj.expiry is not None:
             expiry = invoice_obj.date + invoice_obj.expiry
 
+        # NUT #04: Mints **MUST** include `amount_paid`, `amount_issued`, and `updated_at` in all mint quote responses.
+        # NUT #04: `amount_paid` and `amount_issued` **MUST** be non-negative integers, and `amount_issued` **MUST NOT** exceed `amount_paid`.
+        # NUT #04: Mints **MUST** update `updated_at` whenever `amount_paid` or `amount_issued` changes.
         quote = MintQuote(
             quote=generate_uuid_v7(),
             method=method.name,
@@ -504,6 +514,8 @@ class Ledger(
             List[BlindedSignature]: Signatures on the outputs.
         """
         await self._verify_outputs(outputs)
+        # NUT #04: Mints **MUST NOT** issue ecash whose total output amount exceeds `amount_paid - amount_issued`.
+        # NUT #04: The total output amount **MUST NOT** exceed the quote's currently mintable amount, `amount_paid - amount_issued`.
         sum_amount_outputs = sum([b.amount for b in outputs])
         # we already know from _verify_outputs that all outputs have the same unit because they have the same keyset
         output_unit = self.keysets[outputs[0].id].unit
@@ -525,6 +537,7 @@ class Ledger(
                 raise TransactionError("amount to mint does not match quote amount")
             if quote.expiry and quote.expiry < int(time.time()):
                 raise TransactionError("quote expired")
+            # NUT #20: This NUT defines signature-based authentication for mint quote redemption. When requesting a mint quote, clients provide a public key. The mint will then require a valid signature from the corresponding secret key to process the mint operation.
             if not self._verify_mint_quote_witness(quote, outputs, signature):
                 raise QuoteSignatureInvalidError()
             await self._store_blinded_messages(outputs, mint_id=quote_id)
@@ -629,6 +642,7 @@ class Ledger(
                 raise TransactionError("amount to mint exceeds quote amounts sum")
 
         # Signature validation (NUT-20)
+        # NUT #20: `20008`: Mint quote with `pubkey` but no valid `signature` provided for mint request.
         for i, quote in enumerate(quotes):
             sig = payload.signatures[i] if payload.signatures else None
 
@@ -721,6 +735,7 @@ class Ledger(
         if not payment_quote.checking_id:
             raise Exception("quote has no checking id")
         # verify that payment quote amount is as expected
+        # NUT #15: `amount` is the partial amount for the requested payment in millisats (msat).
         if (
             melt_quote.is_mpp
             and melt_quote.mpp_amount != payment_quote.amount.to(Unit.msat).amount
@@ -755,6 +770,7 @@ class Ledger(
         if settings.mint_bolt11_disable_melt:
             raise NotAllowedError("Melting with bol11 is disabled.")
 
+        # NUT #05: `method` **MUST** match `[a-z0-9_-]+`.
         unit, method = self._verify_and_get_unit_method(
             melt_quote.unit, Method.bolt11.name
         )
@@ -776,6 +792,7 @@ class Ledger(
         else:
             # not internal
             # verify that the backend supports mpp if the quote request has an amount
+            # NUT #15: The mint MUST indicate each `method` and `unit` that supports mpp.
             if melt_quote.is_mpp and not self.backends[method][unit].supports_mpp:
                 raise TransactionError("backend does not support mpp.")
             # get payment quote by backend
@@ -807,6 +824,7 @@ class Ledger(
         elif invoice_obj.expiry is not None:
             expiry = invoice_obj.date + invoice_obj.expiry
 
+        # NUT #05: the wallet provides proofs covering at least `amount + fee_reserve + fee`, where `fee` is the keyset input fee per [NUT-02][02])
         quote = MeltQuote(
             quote=generate_uuid_v7(),
             method=method.name,
@@ -1054,6 +1072,7 @@ class Ledger(
             except Exception as e:
                 logger.error(f"Error in background melt task: {e}")
 
+        # NUT #05: the mint **MUST** process melt requests for that method asynchronously.
         asyncio.create_task(melt_task())
         return PostMeltQuoteResponse.from_melt_quote(melt_quote)
 
@@ -1116,6 +1135,7 @@ class Ledger(
         self._verify_sigall_spending_conditions(proofs, outputs or [], message_to_sign)
 
         # verify that the amount of the input proofs is equal to the amount of the quote
+        # NUT #05: the wallet provides proofs covering at least `amount + fee_reserve + fee`, where `fee` is the keyset input fee per [NUT-02][02])
         total_provided = sum_proofs(proofs)
         input_fees = self.get_fees_for_proofs(proofs)
         total_needed = melt_quote.amount + melt_quote.fee_reserve + input_fees
@@ -1330,6 +1350,7 @@ class Ledger(
         """
         logger.trace("swap called")
         # verify spending inputs, outputs, and spending conditions
+        # NUT #03: A swap operation consists of multiple inputs (`Proofs`) and outputs (`BlindedMessages`). Mints verify and invalidate the inputs and issue new promises (`BlindSignatures`).
         await self.verify_inputs_and_outputs(proofs=proofs, outputs=outputs)
         await self.db_write._verify_spent_proofs_and_set_pending(
             proofs, keysets=self.keysets
@@ -1338,6 +1359,10 @@ class Ledger(
             Ys = [p.Y for p in proofs]
             lock_parameters = {f"y{i}": y for i, y in enumerate(Ys)}
             ys_list = ", ".join(f":y{i}" for i in range(len(Ys)))
+            # NUT #07: Mints **MUST** remember which proofs are currently `PENDING`
+            # to avoid reuse of the same token in multiple concurrent transactions.
+            # This can be achieved with for example mutex lock whose key is the
+            # `Proof`'s `Y`.
             async with self.db.get_connection(
                 lock_table="proofs_pending",
                 lock_select_statement=f"y IN ({ys_list})",
@@ -1370,6 +1395,10 @@ class Ledger(
         logger.trace("swap successful")
         return promises
 
+    # NUT #09: Mints only respond with a `BlindSignature`, if they have previously
+    # signed the `BlindedMessage`.
+    # NUT #09: The returned arrays `outputs` and `signatures` are of the same length and
+    # for every entry `outputs[i]`, there is a corresponding entry `signatures[i]`.
     async def restore(
         self, outputs: List[BlindedMessage]
     ) -> Tuple[List[BlindedMessage], List[BlindedSignature]]:
@@ -1405,6 +1434,8 @@ class Ledger(
             raise TransactionError("restored signature does not match promise")
         return DLEQ(e=e.to_hex(), s=s.to_hex())
 
+    # NUT #09: Mints must store the `BlindedMessage` and the corresponding
+    # `BlindSignature` in their database every time they issue a `BlindSignature`.
     async def _store_blinded_messages(
         self,
         outputs: List[BlindedMessage],

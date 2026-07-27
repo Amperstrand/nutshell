@@ -56,6 +56,7 @@ from typing import Optional, Tuple
 
 from .secp import PrivateKey, PublicKey
 
+# NUT #00: `DOMAIN_SEPARATOR` constant byte string `b"Secp256k1_HashToCurve_Cashu_"`
 DOMAIN_SEPARATOR = b"Secp256k1_HashToCurve_Cashu_"
 
 # Domain separation tag for deterministic DLEQ nonce derivation (NUT-12).
@@ -64,6 +65,9 @@ DLEQ_NONCE_DST = b"Cashu_DLEQ_R_v1"
 SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 
 
+# NUT #00: Deterministically maps a message to a public key point on the secp256k1 curve, utilizing a domain separator to ensure uniqueness.
+# NUT #00: `Y = PublicKey('02' || SHA256(msg_hash || counter))` where `msg_hash` is `SHA256(DOMAIN_SEPARATOR || x)`
+# NUT #00: `counter` uint32 counter(byte order little endian) incremented from 0 until a point is found that lies on the curve
 def hash_to_curve(message: bytes) -> PublicKey:
     """Generates a secp256k1 point from a message.
 
@@ -91,6 +95,10 @@ def hash_to_curve(message: bytes) -> PublicKey:
     raise ValueError("No valid point found")
 
 
+# NUT #00: `x` UTF-8-encoded random string (secret message), corresponds to point `Y = hash_to_curve(x)` on curve
+# NUT #00: `r` blinding factor (scalar)
+# NUT #00: `B_` blinded message (curve point)
+# NUT #00: `Alice` sends to `Bob`: `B_ = Y + rG` with `r` being a random blinding factor (**blinding**)
 def step1_alice(
     secret_msg: str, blinding_factor: Optional[PrivateKey] = None
 ) -> tuple[PublicKey, PrivateKey]:
@@ -100,6 +108,7 @@ def step1_alice(
     return B_, r
 
 
+# NUT #00: `Bob` sends back to `Alice` blinded key: `C_ = kB_` (these two steps are the DH key exchange) (**signing**)
 def step2_bob(B_: PublicKey, a: PrivateKey) -> Tuple[PublicKey, PrivateKey, PrivateKey]:
     C_: PublicKey = B_ * a  # type: ignore
     # produce dleq proof
@@ -107,11 +116,14 @@ def step2_bob(B_: PublicKey, a: PrivateKey) -> Tuple[PublicKey, PrivateKey, Priv
     return C_, e, s
 
 
+# NUT #00: `C` unblinded signature (curve point)
+# NUT #00: `Alice` can calculate the unblinded key as `C_ - rK = kY + krG - krG = kY = C` (**unblinding**)
 def step3_alice(C_: PublicKey, r: PrivateKey, A: PublicKey) -> PublicKey:
     C: PublicKey = C_ - A * r  # type: ignore
     return C
 
 
+# NUT #00: `Carol` can send `(x, C)` to `Bob` who then checks that `k*hash_to_curve(x) == C` (**verification**), and if so treats it as a valid spend of a token, adding `x` to the list of spent secrets.
 def verify(a: PrivateKey, C: PublicKey, secret_msg: str) -> bool:
     Y: PublicKey = hash_to_curve(secret_msg.encode("utf-8"))
     return C == Y * a  # type: ignore
@@ -157,6 +169,7 @@ def derive_dleq_nonce(
     raise ValueError("DLEQ nonce derivation failed")  # pragma: no cover
 
 
+# NUT #12: Mints **SHOULD** use a rejection-sampled deterministic nonce (`r`) to avoid RNG failures.
 def step2_bob_dleq(
     B_: PublicKey, a: PrivateKey, p_bytes: bytes = b""
 ) -> Tuple[PrivateKey, PrivateKey]:
@@ -180,6 +193,7 @@ def step2_bob_dleq(
     return epk, spk
 
 
+# NUT #12: If a DLEQ proof is included in the mint's `BlindSignature` response, wallets **MUST** verify the DLEQ proof.
 def alice_verify_dleq(
     B_: PublicKey, C_: PublicKey, e: PrivateKey, s: PrivateKey, A: PublicKey
 ) -> bool:
@@ -189,6 +203,7 @@ def alice_verify_dleq(
     return e_bytes == hash_e(R1, R2, A, C_)
 
 
+# NUT #12: If a DLEQ proof is included in a received token, wallets **MUST** verify the proof.
 def carol_verify_dleq(
     secret_msg: str,
     r: PrivateKey,
