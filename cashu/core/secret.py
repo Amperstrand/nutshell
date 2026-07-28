@@ -92,6 +92,15 @@ class Secret(BaseModel):
         nonce = kwargs.pop("nonce")
         tags_list: List = kwargs.pop("tags", None)
         tags = Tags(tags=tags_list)
+        # NUT-11: Each tag may appear exactly ONCE. MUST be rejected as unspendable.
+        if tags_list:
+            seen = set()
+            for tag in tags_list:
+                name = tag[0] if isinstance(tag, list) and len(tag) > 0 else None
+                if name is not None:
+                    if name in seen:
+                        raise ValueError(f"Duplicate tag in secret: {name}")
+                    seen.add(name)
         logger.debug(f"Deserialized Secret: {kind}, {data}, {nonce}, {tags}")
         return cls(kind=kind, data=data, nonce=nonce, tags=tags)
 

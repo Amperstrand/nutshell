@@ -28,6 +28,7 @@ def verify_htlc_spending_conditions(
         try:
             if len(preimage) != 64:
                 raise TransactionError("HTLC preimage must be 64 characters hex.")
+            # REF-CDK: accepts mixed-case hex (Sha256Hash::from_str), Nutshell uses bytes.fromhex (also case-insensitive)
             if sha256(bytes.fromhex(preimage)).digest() != bytes.fromhex(
                 htlc_secret.data
             ):

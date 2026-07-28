@@ -96,6 +96,7 @@ class LedgerSpendingConditions:
                 # HTLC with no main pubkeys and a valid preimage
                 return True
 
+        # REF-CDK: rejects non-HTLCWitness type for refund (nut14/mod.rs:144), Nutshell accepts any witness
         # Check if locktime has passed and refund path is available
         # NUT #11: Both [Locktime Multisig](#locktime-multisig) and [Refund Multisig](#refund-multisig)
         #  conditions apply if the `refund` tag is present, otherwise the proof is considered
@@ -163,6 +164,7 @@ class LedgerSpendingConditions:
             # no signature present although secret indicates one
             raise TransactionError("no signatures in proof.")
 
+        # REF-CDK: also rejects duplicate sigs via HashSet (nut11/mod.rs:343)
         # we make sure that there are no duplicate signatures
         if len(set(signatures)) != len(signatures):
             raise TransactionError("signatures must be unique.")
@@ -176,6 +178,7 @@ class LedgerSpendingConditions:
         if not n_sigs_required > 0:
             raise TransactionError("n_sigs must be positive.")
 
+        # REF-CDK: does NOT validate n_sigs > pubkeys on verify path (deferred to construction)
         # check if enough pubkeys or signatures are present
         if len(pubkeys) < n_sigs_required or len(signatures) < n_sigs_required:
             raise TransactionError(
@@ -230,6 +233,7 @@ class LedgerSpendingConditions:
         except Exception:
             # secret is not a spending condition so we treat is a normal secret
 
+            # REF-CDK: also rejects witness on plain secret (mod.rs:283 IncorrectWitnessKind)
             # no spending conditions means no witness allowed
             if proof.witness is not None:
                 raise TransactionError(
@@ -250,6 +254,7 @@ class LedgerSpendingConditions:
             nut14.verify_htlc_spending_conditions(proof)
             return self._verify_p2pk_sig_inputs(proof, htlc_secret)
 
+        # REF-CDK: unknown kind treated as anyone-can-spend (mod.rs:399), Nutshell raises ValueError
         # no spending condition present
         return True
 
